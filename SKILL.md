@@ -347,7 +347,9 @@ export class MudbaseClient {
     })
 
     if (!res.ok) {
-      const error = await res.json().catch(() => ({ message: res.statusText }))
+      const error = (await res.json().catch(() => ({ message: res.statusText }))) as {
+        message?: string
+      }
       throw new MudbaseError(error.message ?? 'Request failed', res.status, error)
     }
 
@@ -753,17 +755,16 @@ export class MudbaseClient {
     if (this.ws?.readyState === WebSocket.OPEN) return
 
     const wsUrl = this.baseUrl.replace(/^http/, 'ws')
-    this.ws = new WebSocket(`${wsUrl}/ws?projectId=${this.projectId}&token=${this.token ?? ''}`)
+    const ws = new WebSocket(`${wsUrl}/ws?projectId=${this.projectId}&token=${this.token ?? ''}`)
+    this.ws = ws
 
-    this.ws.onopen = () => {
+    ws.onopen = () => {
       this.wsReconnectAttempts = 0
       // Send auth handshake
-      this.ws!.send(
-        JSON.stringify({ type: 'auth', token: this.token, projectId: this.projectId })
-      )
+      ws.send(JSON.stringify({ type: 'auth', token: this.token, projectId: this.projectId }))
     }
 
-    this.ws.onmessage = (event: MessageEvent) => {
+    ws.onmessage = (event: MessageEvent) => {
       try {
         const message = JSON.parse(event.data as string) as {
           channel: string
@@ -780,12 +781,12 @@ export class MudbaseClient {
       }
     }
 
-    this.ws.onclose = () => {
+    ws.onclose = () => {
       this.scheduleWsReconnect()
     }
 
-    this.ws.onerror = () => {
-      this.ws?.close()
+    ws.onerror = () => {
+      ws.close()
     }
   }
 
@@ -804,10 +805,12 @@ export class MudbaseClient {
 
   subscribe(channel: string, event: string, callback: (data: unknown) => void): () => void {
     const key = `${channel}:${event}`
-    if (!this.realtimeListeners.has(key)) {
-      this.realtimeListeners.set(key, new Set())
+    let listeners = this.realtimeListeners.get(key)
+    if (!listeners) {
+      listeners = new Set()
+      this.realtimeListeners.set(key, listeners)
     }
-    this.realtimeListeners.get(key)!.add(callback)
+    listeners.add(callback)
 
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.connectWebSocket()
@@ -926,8 +929,13 @@ export function useMudbase(): MudbaseContextValue {
 // src/main.tsx (React) or src/app/layout.tsx (Next.js)
 import { MudbaseProvider } from '@/lib/mudbase-provider'
 
+const projectId = process.env.NEXT_PUBLIC_MUDBASE_PROJECT_ID
+if (!projectId) {
+  throw new Error('NEXT_PUBLIC_MUDBASE_PROJECT_ID must be set')
+}
+
 const mudbaseConfig = {
-  projectId: process.env.NEXT_PUBLIC_MUDBASE_PROJECT_ID!,
+  projectId,
   // baseUrl defaults to https://cloud.mudbase.dev
 }
 
@@ -1046,7 +1054,10 @@ export function useAuth(): UseAuthReturn {
 // src/lib/oauth.ts
 
 const MUDBASE_URL = process.env.NEXT_PUBLIC_MUDBASE_URL ?? 'https://cloud.mudbase.dev'
-const PROJECT_ID = process.env.NEXT_PUBLIC_MUDBASE_PROJECT_ID!
+const PROJECT_ID = process.env.NEXT_PUBLIC_MUDBASE_PROJECT_ID
+if (!PROJECT_ID) {
+  throw new Error('NEXT_PUBLIC_MUDBASE_PROJECT_ID must be set')
+}
 
 export type OAuthProvider = 'google' | 'github' | 'facebook' | 'microsoft' | 'discord'
 
@@ -2394,7 +2405,15 @@ export async function awaitFunctionResult<TResult>(
     const execution = await client.getFunctionExecution<TResult>(functionId, executionId)
 
     if (execution.status === 'success') {
-      return execution.result as TResult
+      if (execution.result === null) {
+        throw new FunctionExecutionError(
+          'Function reported success but returned no result',
+          executionId,
+          execution.errorClass,
+          execution.logs
+        )
+      }
+      return execution.result
     }
     if (execution.status === 'failed') {
       throw new FunctionExecutionError(
@@ -2582,21 +2601,34 @@ export default async function SignupPage() {
 'use client'
 
 import { useState } from 'react'
+import type { ReactNode } from 'react'
 import type { MultiRoleRole } from '@/lib/mudbase'
-import { SignupForm } from '@/components/auth/SignupForm'
 
-export function RoleSelector({ roles }: { roles: MultiRoleRole[] }) {
+interface RoleSelectorProps {
+  roles: MultiRoleRole[]
+  /**
+   * Renders the actual signup form for the chosen role — bring your own component here
+   * rather than hardcoding one; the picker's only job is choosing the role.
+   */
+  renderForm?: (role: string, onChangeRole: (() => void) | undefined) => ReactNode
+}
+
+export function RoleSelector({ roles, renderForm }: RoleSelectorProps) {
   // A single-role project skips the picker entirely.
   const [selectedRole, setSelectedRole] = useState<string | null>(
     roles.length === 1 ? roles[0].slug : null
   )
 
   if (selectedRole !== null) {
+    const onChangeRole = roles.length === 1 ? undefined : () => setSelectedRole(null)
+    if (renderForm) {
+      return <>{renderForm(selectedRole, onChangeRole)}</>
+    }
     return (
-      <SignupForm
-        role={selectedRole}
-        onChangeRole={roles.length === 1 ? undefined : () => setSelectedRole(null)}
-      />
+      <p className="text-center text-sm text-gray-600">
+        Selected role: <strong>{selectedRole}</strong>. Pass a <code>renderForm</code> prop to
+        render your own signup form for this role.
+      </p>
     )
   }
 
@@ -2997,23 +3029,26 @@ export class MudbaseSocket {
     this.statusListeners.forEach((cb) => cb(s))
   }
 
-  /** Emit with optional acknowledgement callback */
-  emit(event: string, data: unknown, ack?: (res: unknown) => void): void {
+  /** Emit with optional acknowledgement callback. `data` is omittable for signal-only events. */
+  emit(event: string, data?: unknown, ack?: (res: unknown) => void): void {
     if (!this.socket?.connected) {
       console.warn(`[mudbase socket] emit "${event}" while not connected`)
       return
     }
     if (ack) {
       this.socket.emit(event, data, ack)
-    } else {
+    } else if (data !== undefined) {
       this.socket.emit(event, data)
+    } else {
+      this.socket.emit(event)
     }
   }
 
   /** Subscribe to a server event; returns unsubscribe fn */
   on<T = unknown>(event: string, handler: (data: T) => void): () => void {
-    this.socket?.on(event, handler as (...args: unknown[]) => void)
-    return () => this.socket?.off(event, handler as (...args: unknown[]) => void)
+    const wrapped = (payload: unknown): void => handler(payload as T)
+    this.socket?.on(event, wrapped)
+    return () => this.socket?.off(event, wrapped)
   }
 }
 
@@ -3995,7 +4030,7 @@ export function useCall() {
       'call:accepted',
       (ev) => setCallState((prev) =>
         prev.status === 'ringing' || prev.status === 'active'
-          ? { status: 'active', chatId: ev.chatId, type: (prev as { type: 'video' | 'audio' }).type ?? 'video' }
+          ? { status: 'active', chatId: ev.chatId, type: prev.type }
           : prev
       )
     )
@@ -4255,9 +4290,49 @@ The signature is the hex HMAC-SHA256 of the exact JSON body mudbase sent. Compar
 // src/app/api/webhooks/mudbase/route.ts (Next.js App Router)
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
+import { revalidateTag } from 'next/cache'
 import type { MudbaseWebhookEvent } from '@/lib/mudbase-webhooks'
 
 const WEBHOOK_SECRET = process.env.MUDBASE_WEBHOOK_SECRET
+
+// Illustrative idempotency guard — swap for a Redis SETNX with a 24h TTL in production
+// (see the rate-limiting/idempotency conventions in rules/ecc/common/security.md). An
+// in-memory Set does not survive a restart or work across multiple instances.
+const processedWebhookDeliveries = new Set<string>()
+const WEBHOOK_DEDUPE_TTL_MS = 24 * 60 * 60 * 1000
+
+async function checkWebhookProcessed(deliveryId: string): Promise<boolean> {
+  return processedWebhookDeliveries.has(deliveryId)
+}
+
+async function markWebhookProcessed(deliveryId: string): Promise<void> {
+  processedWebhookDeliveries.add(deliveryId)
+  setTimeout(() => processedWebhookDeliveries.delete(deliveryId), WEBHOOK_DEDUPE_TTL_MS)
+}
+
+// Each handler below invalidates the Next.js cache tags a real UI would have used to
+// fetch that data (`fetch(url, { next: { tags: [...] } })`), which is the minimal real
+// reaction to a mudbase event inside a Route Handler. Replace with your own side effects
+// (queueing a job, writing an audit log, sending a notification) as needed.
+async function handleUserCreated(data: unknown): Promise<void> {
+  void data
+  revalidateTag('users')
+}
+
+async function handleDocumentCreated(data: unknown): Promise<void> {
+  void data
+  revalidateTag('collection-documents')
+}
+
+async function handleFunctionCompleted(data: unknown): Promise<void> {
+  void data
+  revalidateTag('function-executions')
+}
+
+async function handlePaymentSucceeded(data: unknown): Promise<void> {
+  void data
+  revalidateTag('payments')
+}
 
 interface MudbaseWebhookPayload {
   event: MudbaseWebhookEvent
@@ -4430,6 +4505,7 @@ async function loadDashboard() {
 
 ```typescript
 // src/lib/retry.ts
+import { getMudbaseClient, MudbaseError } from '@/lib/mudbase'
 
 interface RetryOptions {
   maxAttempts?: number
@@ -4451,14 +4527,12 @@ export async function retryWithBackoff<T>(
       attempt++
       if (attempt >= maxAttempts) throw err
 
-      const isRetryable =
-        err instanceof MudbaseError &&
-        (err.statusCode === 429 || err.statusCode >= 500)
-
+      if (!(err instanceof MudbaseError)) throw err
+      const isRetryable = err.statusCode === 429 || err.statusCode >= 500
       if (!isRetryable) throw err
 
       // Respect Retry-After if present
-      const retryAfter = (err.details as { retryAfter?: number })?.retryAfter
+      const retryAfter = (err.details as { retryAfter?: number } | undefined)?.retryAfter
       const delay = retryAfter
         ? retryAfter * 1000
         : Math.min(initialDelayMs * 2 ** (attempt - 1), maxDelayMs)
@@ -4471,9 +4545,9 @@ export async function retryWithBackoff<T>(
 }
 
 // Usage
-const data = await retryWithBackoff(() =>
-  getMudbaseClient().getDocuments('orders')
-)
+async function loadOrdersWithRetry(): Promise<unknown> {
+  return retryWithBackoff(() => getMudbaseClient().getDocuments('orders'))
+}
 ```
 
 ### React Query retry config for mudbase
@@ -4541,7 +4615,7 @@ Two consequences for client design:
 // In MudbaseClient.request() — add Retry-After header handling
 if (res.status === 429) {
   const retryAfter = parseInt(res.headers.get('Retry-After') ?? '1', 10)
-  const error = await res.json().catch(() => ({}))
+  const error = (await res.json().catch(() => ({}))) as Record<string, unknown>
   throw new MudbaseError('Rate limit exceeded', 429, { retryAfter, ...error })
 }
 ```
@@ -4552,6 +4626,7 @@ For bulk operations (e.g. importing 500 documents), batch requests and respect t
 
 ```typescript
 // src/lib/request-queue.ts
+import { getMudbaseClient } from '@/lib/mudbase'
 
 export async function batchWithRateLimit<T>(
   items: T[],
@@ -4572,11 +4647,13 @@ export async function batchWithRateLimit<T>(
 // Usage: import 500 documents inside the data-mutation budget (600 writes / 60s).
 // 8 writes per 1000ms = 480/min, comfortably under the limit with headroom for
 // whatever else the app is doing on the same IP.
-await batchWithRateLimit(
-  documents,
-  (doc) => getMudbaseClient().createDocument('products', doc),
-  { batchSize: 8, delayMs: 1000 }
-)
+async function importProducts(documents: Record<string, unknown>[]): Promise<void> {
+  await batchWithRateLimit(
+    documents,
+    (doc) => getMudbaseClient().createDocument('products', doc),
+    { batchSize: 8, delayMs: 1000 }
+  )
+}
 ```
 
 ### Debounce on search / filter inputs
