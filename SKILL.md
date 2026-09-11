@@ -1,11 +1,11 @@
 ---
 name: mudbase
-description: Complete integration guide for building client apps on Mudbase (backend as a service). Covers the typed SDK client, every auth flow (local, OAuth, magic link, OTP, anonymous, 2FA, SSO), collections CRUD with React Query, file storage, Socket.IO realtime (chat, presence, wallets, calls), GraphQL, serverless functions, webhooks, the MCP server for AI agents, add-ons, KYC, payment links, and wallet transaction broadcasting.
+description: Complete integration guide for building client apps on Mudbase (backend as a service). Covers the typed SDK client, every auth flow (local, OAuth, magic link, OTP, anonymous, 2FA, SSO), collections CRUD with React Query, file storage, Socket.IO realtime (chat, presence, calls), GraphQL, serverless functions, webhooks, the MCP server for AI agents, add-ons, KYC, payment links, and merchant payment processing.
 ---
 
 # Mudbase
 
-Mudbase (`mudbase.dev`) is a backend-as-a-service platform: multi-tenant projects, JSON-schema collections with role-based permissions, file storage, Socket.IO realtime, serverless functions, an auto-generated read-only GraphQL schema, multi-chain crypto wallets, and a REST API at `cloud.mudbase.dev`. This skill teaches an AI coding agent, or any developer, everything needed to build a client application against an existing Mudbase project.
+Mudbase (`mudbase.dev`) is a backend-as-a-service platform: multi-tenant projects, JSON-schema collections with role-based permissions, file storage, Socket.IO realtime, serverless functions, an auto-generated read-only GraphQL schema, merchant payment processing and stablecoin payment links, and a REST API at `cloud.mudbase.dev`. This skill teaches an AI coding agent, or any developer, everything needed to build a client application against an existing Mudbase project.
 
 Full reference documentation lives at https://docs.mudbase.dev.
 
@@ -23,7 +23,7 @@ This file is a map, not the manual. Read it first, then open the specific `refer
 | `references/messaging.md` | Real-time chat over Socket.IO, and the REST messaging API (email, SMS, push) plus plan quotas |
 | `references/functions.md` | Serverless functions, the async execution/polling model, function vs. client-side logic |
 | `references/access-control.md` | The multi-role system and API key management, including scoped least-privilege keys |
-| `references/wallets-and-payments.md` | Wallet realtime events, payment links, broadcasting transactions, merchant payment fees, in-app credit balance |
+| `references/wallets-and-payments.md` | Payment links (stablecoin checkout), merchant payment processing fees, in-app credit balance. Mudbase's own crypto wallets and transaction broadcasting were archived to MudChain, a separate product, and are not covered here |
 | `references/integrations-and-webhooks.md` | The integrations framework, calls/signaling, and outbound webhooks (config, signature verification, retries) |
 | `references/error-handling-and-limits.md` | HTTP error codes, retry/backoff, rate limit buckets, client-side request queuing |
 | `references/mcp-and-ai-agents.md` | The backend's built-in MCP server (38 tools) and the standalone `mudbase-mcp-server` package |

@@ -2,7 +2,7 @@
 
 ## 1. Add-ons Marketplace
 
-Add-ons are small metered utilities the platform runs for you: QR/PDF/CSV/ICS/vCard generation, GeoIP, currency and crypto price lookup, UUID/hash/slug/password generation, Markdown rendering. Each successful invocation is billed per call against the org's in-app credit balance (see `wallets-and-payments.md`, section 5).
+Add-ons are small metered utilities the platform runs for you: QR/PDF/CSV/ICS/vCard generation, GeoIP, currency and crypto price lookup, UUID/hash/slug/password generation, Markdown rendering. Each successful invocation is billed per call against the org's in-app credit balance (see `wallets-and-payments.md`, section 3).
 
 | Operation | Method + path | Auth |
 |-----------|---------------|------|
@@ -225,5 +225,5 @@ Start accepts `{ workflowId, vendorData, callback, language, reuseIdentifier }`.
 
 ## See also
 
-- `wallets-and-payments.md`, the in-app credit balance add-ons bill against, and the withdrawal/broadcast routes this file's KYC gate protects
+- `wallets-and-payments.md`, the in-app credit balance add-ons bill against
 - `integrations-and-webhooks.md`, the signature scheme white-label KYC results are delivered with

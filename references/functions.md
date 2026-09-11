@@ -236,7 +236,7 @@ mudbase also runs a set of its own background processes. You cannot invoke these
 | Process | Why it matters to a client app |
 |---------|-------------------------------|
 | Usage metering worker | API-call and storage counters flush asynchronously, so a usage dashboard can lag a burst of writes by a short interval |
-| Wallet indexers / non-EVM pollers | Incoming deposits are detected by polling and indexing, not synchronously, a deposit appears some blocks after it confirms on chain |
+| Incoming-payment webhook | Stablecoin payment link confirmation is detected asynchronously by an incoming-payment webhook, not synchronously at checkout, a payment link can take a short interval to settle after the customer sends it (see `wallets-and-payments.md`) |
 | Webhook retry sweep | Runs every 5 minutes; a failed delivery is retried on that cadence, not instantly |
 | Project clone / export / migration-import workers | Long operations return a `jobId` and complete out of band, poll the corresponding job-status endpoint (see `migration-import.md`) |
 | Add-on worker | Add-on invocations may return `202` with a pending job; poll it (see `addons-and-kyc.md`) |

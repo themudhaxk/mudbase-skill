@@ -323,7 +323,7 @@ The names that actually appear in the `event` field come from the enum on the pr
 | `function.execution.completed` / `function.execution.failed` | Serverless function run reached a terminal state |
 | `payment.succeeded` / `payment.failed` | Payment outcome |
 | `email.delivered` / `email.bounced` / `email.complained` | Provider delivery status |
-| `wallet.created` / `wallet.transaction` / `wallet.balance_changed` | Wallet activity (see `wallets-and-payments.md`) |
+| `wallet.created` / `wallet.transaction` / `wallet.balance_changed` | Legacy from the crypto-wallet stack archived to MudChain on 2026-08-23. Still a valid `webhookEvents` enum value, but nothing in mudbase emits it, do not build against it |
 | `api_key.created` / `api_key.revoked` | Key lifecycle |
 | `backup.completed` / `backup.failed` / `backup.restored` / `backup.restore_failed` | Backup jobs |
 
@@ -490,4 +490,5 @@ Return `200` as soon as you have durably accepted the payload, then do the work 
 ## See also
 
 - `realtime.md`, the shared Socket.IO client these call/integration events ride on top of
-- `messaging.md`, `wallets-and-payments.md`, the domain events (`email.*`, `payment.*`, `wallet.*`) this webhook surface can deliver
+- `messaging.md`, the `email.*` domain events this webhook surface can deliver
+- `wallets-and-payments.md`, the `payment.*` domain events this webhook surface can deliver (`wallet.*` is a legacy enum value nothing emits anymore, see the table above)

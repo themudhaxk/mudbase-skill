@@ -1,184 +1,10 @@
-# Wallets, Blockchain & Payments
+# Payments & Credit Balance
 
-mudbase supports multi-chain crypto wallets as a first-class feature, plus a separate merchant payment-processing surface (card/local-rail payments) and an in-app prepaid credit balance for billing. These are three related but distinct systems, covered in order below.
+mudbase does not offer its own custodial or non-custodial crypto wallets. That whole stack (wallet creation, real-time wallet/tx socket events, and transaction broadcasting) was archived out of mudbase on 2026-08-23 and now lives in MudChain, a separate product with its own API - it is not part of mudbase's capability surface and this SDK has no client for it. If your app needs to create wallets, track balances, or broadcast signed transactions, integrate with MudChain directly, not mudbase.
 
-## 1. Wallet Real-Time Events
+What mudbase itself still provides is a merchant payment-processing surface (card/local-rail payments and stablecoin payment links) and an in-app prepaid credit balance for billing. These are two related but distinct systems, covered in order below.
 
-Max 50 wallet rooms per socket. Uses the same `getMudbaseSocket()` client from `realtime.md`.
-
-### Subscribe
-
-```typescript
-const socket = getMudbaseSocket()
-
-// By project (all wallets in this project)
-socket.emit('wallet:subscribe:project', { projectId: 'YOUR_PROJECT_ID' }, (ack: unknown) => {
-  console.log('wallet subscribed:', ack)
-  // { projectId: '...', room: 'wallet:project:...' }
-})
-
-// By specific wallet address
-socket.emit('wallet:subscribe:address', { addressId: 'WALLET_ADDRESS_ID' })
-
-// By chain (ethereum, bitcoin, solana, etc., lowercase)
-socket.emit('wallet:subscribe:chain', { chain: 'ethereum' })
-
-// By currency symbol
-socket.emit('wallet:subscribe:currency', { currency: 'USDT' })
-
-// Unsubscribe
-socket.emit('wallet:unsubscribe:address', { addressId: 'WALLET_ADDRESS_ID' })
-socket.emit('wallet:unsubscribe:project', { projectId: 'YOUR_PROJECT_ID' })
-```
-
-### Server events
-
-```typescript
-interface WalletBalanceEvent {
-  addressId: string
-  address: string // on-chain address, e.g. "0xabc..."
-  chain: string // "ethereum", "bitcoin", etc.
-  project: string
-  org: string
-  previousBalance: string // decimal string
-  newBalance: string
-  balance: string
-  timestamp: string
-}
-
-interface WalletTxEvent {
-  addressId: string
-  address: string
-  chain: string
-  txHash: string
-  amount: string
-  currency: string
-  direction: 'incoming' | 'outgoing'
-  project: string
-  timestamp: string
-}
-
-socket.on<WalletBalanceEvent>('wallet:balance:updated', (ev) => {
-  updateWalletBalance(ev.addressId, ev.newBalance, ev.chain)
-})
-
-socket.on<WalletTxEvent>('wallet:tx:detected', (ev) => {
-  addPendingTransaction(ev)
-})
-
-socket.on<WalletTxEvent>('wallet:tx:broadcast', (ev) => {
-  updateTxStatus(ev.txHash, 'broadcast')
-})
-
-socket.on<WalletTxEvent>('wallet:tx:confirmed', (ev) => {
-  updateTxStatus(ev.txHash, 'confirmed')
-})
-
-socket.on<WalletTxEvent>('wallet:tx:failed', (ev) => {
-  updateTxStatus(ev.txHash, 'failed')
-})
-```
-
-Events may be emitted to multiple rooms simultaneously (address, project, org, chain, currency rooms).
-
-### `useWallet` hook
-
-```typescript
-// src/hooks/useWallet.ts
-'use client'
-
-import { useState, useEffect } from 'react'
-import { getMudbaseSocket } from '@/lib/mudbase-socket'
-
-type TxStatus = 'detected' | 'broadcast' | 'confirmed' | 'failed'
-
-interface WalletTransaction {
-  txHash: string
-  amount: string
-  currency: string
-  direction: 'incoming' | 'outgoing'
-  status: TxStatus
-  chain: string
-  timestamp: string
-}
-
-interface WalletState {
-  balances: Record<string, string> // chain -> balance
-  transactions: WalletTransaction[]
-}
-
-export function useWalletAddressEvents(addressId: string) {
-  const socket = getMudbaseSocket()
-  const [state, setState] = useState<WalletState>({ balances: {}, transactions: [] })
-
-  useEffect(() => {
-    if (!socket.connected || !addressId) return
-
-    socket.emit('wallet:subscribe:address', { addressId })
-
-    const offBalance = socket.on<{ chain: string; newBalance: string }>('wallet:balance:updated', (ev) => {
-      setState((prev) => ({
-        ...prev,
-        balances: { ...prev.balances, [ev.chain]: ev.newBalance },
-      }))
-    })
-
-    function handleTx(status: TxStatus) {
-      return socket.on<WalletTransaction & { txHash: string }>(`wallet:tx:${status}`, (ev) => {
-        setState((prev) => {
-          const idx = prev.transactions.findIndex((t) => t.txHash === ev.txHash)
-          if (idx >= 0) {
-            const updated = [...prev.transactions]
-            updated[idx] = { ...updated[idx], status }
-            return { ...prev, transactions: updated }
-          }
-          return {
-            ...prev,
-            transactions: [{ ...ev, status }, ...prev.transactions],
-          }
-        })
-      })
-    }
-
-    const offDetected  = handleTx('detected')
-    const offBroadcast = handleTx('broadcast')
-    const offConfirmed = handleTx('confirmed')
-    const offFailed    = handleTx('failed')
-
-    return () => {
-      socket.emit('wallet:unsubscribe:address', { addressId })
-      offBalance(); offDetected(); offBroadcast(); offConfirmed(); offFailed()
-    }
-  }, [addressId, socket.connected])
-
-  return state
-}
-
-export function useProjectWalletEvents(projectId: string) {
-  const socket = getMudbaseSocket()
-  const [events, setEvents] = useState<Array<{ type: string; data: unknown }>>([])
-
-  useEffect(() => {
-    if (!socket.connected || !projectId) return
-
-    socket.emit('wallet:subscribe:project', { projectId })
-
-    const evTypes = ['wallet:balance:updated', 'wallet:tx:detected', 'wallet:tx:confirmed', 'wallet:tx:failed'] as const
-    const offs = evTypes.map((type) =>
-      socket.on(type, (data) => setEvents((prev) => [{ type, data }, ...prev].slice(0, 100)))
-    )
-
-    return () => {
-      socket.emit('wallet:unsubscribe:project', { projectId })
-      offs.forEach((off) => off())
-    }
-  }, [projectId, socket.connected])
-
-  return events
-}
-```
-
-## 2. Payment Links
+## 1. Payment Links
 
 A payment link is a hosted, tokenized checkout for a stablecoin payment. You create it org-side; your customer opens it in a browser with no account and no auth.
 
@@ -288,103 +114,43 @@ export async function fetchPublicPaymentLink(
 }
 ```
 
-Payment confirmation is detected by the wallet indexers (see `functions.md`, section 5.2), not synchronously at checkout, so a checkout page should poll the public read, or subscribe to the wallet events in section 1 above, rather than assuming the payment is settled the moment the customer says they sent it.
+Payment confirmation is detected asynchronously by an incoming-payment webhook, not synchronously at checkout, so a checkout page should poll the public read rather than assuming the payment is settled the moment the customer says they sent it.
 
-## 3. Broadcasting Transactions
+## 2. Merchant Payment Processing (fees)
 
-Three distinct surfaces, with genuinely different trust models. Picking the wrong one is an architecture mistake, not a routing detail. For the real-time side of wallets, deposit and confirmation events, see section 1 above; this section covers only the outbound paths.
+Separate from payment links: mudbase also processes card and local-rail merchant payments (the checkout your project's customers pay through, not crypto).
 
-| Surface | Route | Who holds the key | KYC gate |
-|---------|-------|-------------------|----------|
-| Custodial withdrawal | `POST /api/wallet/:walletId/withdraw` | mudbase | yes |
-| Non-custodial broadcast | `POST /api/wallet/non-custodial/broadcast` | your user | yes |
-| Account abstraction (EIP-4337) | `POST /api/wallet/non-custodial/account-abstraction/broadcast` | your user's smart account | yes |
-| Stateless relay | `POST /api/tx/broadcast` | whoever signed it | yes |
+| Operation | Method + path | Auth |
+|-----------|---------------|------|
+| List supported payout countries | `GET /api/orgs/:orgId/payment-processing/countries` | bearer or API key, `payment:read` |
+| Get the bank list for a country | `GET /api/orgs/:orgId/payment-processing/banks?country=NG` | bearer or API key, `payment:read` |
+| Submit payout onboarding | `POST /api/orgs/:orgId/payment-processing/enable` | bearer, owner/admin, KYC-checked |
+| Onboarding status | `GET /api/orgs/:orgId/payment-processing/status` | bearer or API key, `payment:read` |
+| Create a payment | `POST /api/orgs/:orgId/payment-processing/initialize-payment` | bearer or API key, `payment:create` |
+| Preview the fee | `GET /api/orgs/:orgId/payment-processing/fee-breakdown` | bearer or API key, `payment:read` |
+| List payment records | `GET /api/orgs/:orgId/payment-processing/records` | bearer or API key, `payment:read` |
 
-### Custodial withdrawal
+The supported payout-country set is dynamic, do not hardcode a country list in your integration. Call `GET .../countries` and render whatever it returns: each entry carries `code`, `name`, `currency`, `banksListSupported`, `mobileMoney`, `international`, and its own `fields` schema (labels, patterns, whether a bank dropdown or a free-text code applies), so the same onboarding form works across countries without special-casing each one. NG is currently the only market that additionally requires a BVN; US and UK collect routing-number/sort-code style fields plus an account holder name instead of a bank list.
 
-mudbase generated and holds the key; you ask it to send. Body is `{ toAddress, amount, network, options }`; auth is a user bearer token, and the wallet must belong to that user. Layered behind withdrawal-specific security middleware, tenant isolation, and a dedicated rate limiter on top of the KYC gate.
+Submitting `/enable` does not activate payments immediately: it validates and stores the payout details, then queues the org for platform-admin review. The response carries `{ onboarded, alreadyEnabled, approvalStatus }`, not a raw payout-account id. `/initialize-payment` only starts succeeding once the org is approved, so poll `/status` (or read `approvalStatus` on a resubmit) rather than assuming payouts are live the moment `/enable` returns `200`.
 
-Use this when your product's users should not have to manage keys at all, and accept that you are then operating a custodial service, with everything that implies.
+`/initialize-payment` returns `{ link, txRef, providerRef, amount, currency, orgReceives, fee, feeRate }`, a single all-in fee and the effective rate, never a processor-side split. `/fee-breakdown` returns the same shape without creating a payment, and accepts optional `country`, `method` (`card` | `momo` | `bank_transfer` | `ussd` | `eft`), and `international` query params so you can preview the fee for a specific rail before charging it.
 
-### Non-custodial broadcast
-
-Your user signs locally; mudbase only relays and then tracks. Body is `{ chain, signedTx, fromAddress }`, `fromAddress` is required, because it is what links the broadcast to a registered address for later tracking, speed-up and cancel. Register addresses first via `POST /api/wallet/non-custodial/register-address`.
-
-Companion endpoints: `POST /estimate-gas` before signing, `POST /speed-up` and `POST /cancel` to obtain replacement-transaction params for a stuck EVM transaction.
-
-The account-abstraction variant takes the same trust model up a level for smart-contract accounts.
-
-### Stateless relay
-
-`POST /api/tx/broadcast` is the thinnest surface: `{ chain, signedTx, fromAddress?, projectId? }`, no wallet registration required, accepts a user bearer token *or* an API key. It answers "get this signed blob onto this chain" and nothing else. `fromAddress` is optional and used only to associate the broadcast with a registered wallet if one matches.
-
-It is idempotent when you send `X-Idempotency-Key`, do, because a retried broadcast without one is a genuine double-spend risk on chains that accept the same signed transaction twice.
-
-```typescript
-// src/lib/mudbase.ts, inside class MudbaseClient
-  async broadcastSignedTransaction(params: {
-    chain: string
-    signedTx: string
-    fromAddress?: string
-    idempotencyKey: string
-  }): Promise<BroadcastResult> {
-    const res = await this.request<{ success: boolean; message: string; data: BroadcastResult }>(
-      'POST',
-      '/api/tx/broadcast',
-      {
-        chain: params.chain,
-        signedTx: params.signedTx,
-        fromAddress: params.fromAddress,
-        projectId: this.projectId,
-      },
-      { headers: { 'X-Idempotency-Key': params.idempotencyKey } }
-    )
-    return res.data
-  }
-```
-
-```typescript
-// src/lib/mudbase.ts, types
-export interface BroadcastResult {
-  txHash: string
-  status: 'broadcast'
-}
-```
-
-That method needs one addition to the `request()` helper, an optional per-call header bag (already reflected in `sdk-client.md`'s `request()` signature):
-
-```typescript
-// src/lib/mudbase.ts, the options parameter of request()
-  private async request<T>(
-    method: string,
-    path: string,
-    body?: unknown,
-    options: { auth?: boolean; formData?: FormData; headers?: Record<string, string> } = {}
-  ): Promise<T> {
-    const headers: Record<string, string> = { ...options.headers }
-    // ...rest of the method unchanged
-```
-
-Broadcasting is where a `403 KYC_REQUIRED` most commonly surprises people: the org is verified for its dashboard but a *different* org's key is in play, or verification lapsed. Always branch on the error `code`.
-
-## 4. Merchant Payment Processing (fees)
-
-Separate from wallets: mudbase also processes card and local-rail merchant payments (the checkout your project's customers pay through, not crypto). The fee mudbase charges the merchant is **cost-plus**: the underlying processor's real cost for that country/method, passed through, plus a mudbase margin, never a flat marked-up rate presented as if it were the processor's own price.
+The fee mudbase charges the merchant is **cost-plus**: the underlying rail's real cost for that country/method, passed through, plus a mudbase margin, never a flat marked-up rate presented as if it were the rail's own price.
 
 Margin tiers (all amounts USD):
 
 | Tier | Rate | Fixed |
 |------|------|-------|
 | Local African rails | 1.0% | $0.20 |
-| East/Southern Africa card | 0.9% | $0.20 |
-| International | 1.0% | $0.30 |
+| East/Mid Africa card (KE, UG, TZ, RW, ZM) | 0.9% | $0.20 |
+| International (US, UK, cross-border cards) | 1.0% | $0.30 |
 
 Every computed fee is floored at **$0.30** so a very small transaction never charges an unrealistically thin fee. This cost-plus model applies to payment processing specifically; it is distinct from the legacy flat 7% + $0.50 rate, which still exists in the codebase but is now scoped only to the platform's own revenue split on **subscription** billing, not to merchant payment processing.
 
 Never surface which processor mudbase routes a given country/method through in product copy or API responses, present the capability as first-party ("card and local-rail payments", not "payments via [processor]").
 
-## 5. In-App Credit Balance
+## 3. In-App Credit Balance
 
 Distinct from the org's subscription billing. Credit is a **prepaid, spend-only** balance: you top it up, and it is drawn down automatically against overage invoices, capacity purchases and per-call add-on invocations (see `addons-and-kyc.md`). It is deliberately not a wallet, there is no withdrawal, no transfer, and no refund path.
 
@@ -502,6 +268,4 @@ Do not render the balance as a spendable wallet or offer a "withdraw" affordance
 
 ## See also
 
-- `addons-and-kyc.md`, the KYC gate that fronts payment links and broadcasting, and add-on invocation billing against credit
-- `realtime.md`, the shared Socket.IO client wallet events ride on top of
-- `functions.md`, section 5.2, why wallet indexers are eventually consistent
+- `addons-and-kyc.md`, the KYC gate that fronts payment link creation, and add-on invocation billing against credit
